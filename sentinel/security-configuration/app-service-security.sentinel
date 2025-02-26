@@ -1,0 +1,115 @@
+# Sentinel policy for App Service security configuration
+# CIS Azure 9.1: Ensure App Service uses HTTPS only
+# CIS Azure 9.2: Ensure web app is using the latest version of TLS encryption
+# CIS Azure 9.3: Ensure web app is using managed identity
+# CIS Azure 9.9: Ensure that 'HTTP Version' is the latest if used to run the web app 
+
+import "tfplan/v2" as tfplan
+import "tfconfig/v2" as tfconfig
+
+# Get App Service resources
+app_services = filter tfplan.resource_changes as _, rc {
+    rc.type in ["azurerm_linux_web_app", "azurerm_windows_web_app", "azurerm_app_service"] and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+app_service_plans = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_service_plan" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Ensure HTTPS only is enabled
+ensure_https_only = rule {
+    all app_services as _, app {
+        app.change.after.https_only == true
+    }
+}
+
+# Ensure TLS 1.2 or higher is used
+ensure_min_tls_version = rule {
+    all app_services as _, app {
+        app.change.after.site_config[0].minimum_tls_version == "1.2"
+    }
+}
+
+# Ensure HTTP/2 is enabled
+ensure_http2_enabled = rule {
+    all app_services as _, app {
+        app.change.after.site_config[0].http2_enabled == null or
+        app.change.after.site_config[0].http2_enabled == true
+    }
+}
+
+# Ensure managed identity is enabled
+ensure_managed_identity = rule {
+    all app_services as _, app {
+        app.change.after.identity != null and
+        length(app.change.after.identity) > 0 and
+        (app.change.after.identity[0].type == "SystemAssigned" or
+         app.change.after.identity[0].type == "SystemAssigned, UserAssigned")
+    }
+}
+
+# Ensure authentication is enabled
+ensure_authentication = rule {
+    all app_services as _, app {
+        app.change.after.auth_settings != null and
+        length(app.change.after.auth_settings) > 0 and
+        app.change.after.auth_settings[0].enabled == true
+    }
+}
+
+# Ensure FTPS is disabled or set to FTPS only
+ensure_ftps_state = rule {
+    all app_services as _, app {
+        app.change.after.site_config[0].ftps_state == "Disabled" or
+        app.change.after.site_config[0].ftps_state == "FtpsOnly"
+    }
+}
+
+# For production, ensure appropriate SKU is used
+ensure_production_sku = rule when tfconfig.variables.environment.default != "prod" {
+    true
+} else {
+    all app_service_plans as _, plan {
+        contains(["P1v2", "P2v2", "P3v2", "P1v3", "P2v3", "P3v3"], plan.change.after.sku_name)
+    }
+}
+
+# For production, ensure VNet integration or private endpoints
+ensure_network_security = rule when tfconfig.variables.environment.default != "prod" {
+    true
+} else {
+    # In production, App Service should use VNet integration or private endpoints
+    # This is a placeholder for actual production requirements
+    true
+}
+
+# Ensure required tags are applied
+ensure_required_tags = rule {
+    all app_services as _, app {
+        app.change.after.tags != null and
+        keys(app.change.after.tags) contains "Environment" and
+        keys(app.change.after.tags) contains "Project"
+    } and
+    all app_service_plans as _, plan {
+        plan.change.after.tags != null and
+        keys(plan.change.after.tags) contains "Environment" and
+        keys(plan.change.after.tags) contains "Project"
+    }
+}
+
+# Main rule that combines all the rules
+main = rule {
+    ensure_https_only and
+    ensure_min_tls_version and
+    ensure_http2_enabled and
+    ensure_managed_identity and
+    ensure_authentication and
+    ensure_ftps_state and
+    ensure_production_sku and
+    ensure_network_security and
+    ensure_required_tags
+}

@@ -1,0 +1,48 @@
+# Ensure Azure OpenAI deployments have appropriate content filtering configured
+
+import "tfplan/v2" as tfplan
+
+# Get all Azure OpenAI deployments
+allOpenAIDeployments = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_cognitive_deployment" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Define minimum required content filter settings
+# For security, we require at least medium filtering for all categories
+required_minimum_level = "medium"
+
+# Check if each category has at least the minimum required level
+content_filter_check = func(filter_level) {
+    if filter_level == "high" {
+        return true
+    }
+    if filter_level == "medium" {
+        return true
+    }
+    if filter_level == required_minimum_level {
+        return true
+    }
+    return false
+}
+
+# Ensure content filter is configured with appropriate settings
+ensure_content_filter = rule {
+    all allOpenAIDeployments as _, deployment {
+        deployment.change.after.content_filter != null and
+        length(deployment.change.after.content_filter) > 0 and
+        
+        // Check that all required filter categories are defined
+        all ["hate", "sexual", "violence", "self_harm", "profanity"] as category {
+            deployment.change.after.content_filter[0][category] != null and
+            length(deployment.change.after.content_filter[0][category]) > 0 and
+            content_filter_check(deployment.change.after.content_filter[0][category][0].severity_level)
+        }
+    }
+}
+
+# Main rule
+main = rule {
+    ensure_content_filter
+}

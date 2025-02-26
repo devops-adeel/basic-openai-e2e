@@ -1,0 +1,102 @@
+# Sentinel policy for Azure Machine Learning security
+
+import "tfplan/v2" as tfplan
+import "tfconfig/v2" as tfconfig
+
+# Get all Azure ML workspace resources
+ml_workspaces = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_machine_learning_workspace" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Get all Azure ML online endpoints
+ml_endpoints = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_machine_learning_online_endpoint" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Get all Azure ML online deployments
+ml_deployments = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_machine_learning_online_deployment" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Ensure ML workspaces have managed identity
+ensure_workspace_identity = rule {
+    all ml_workspaces as _, ws {
+        ws.change.after.identity != null and
+        length(ws.change.after.identity) > 0 and
+        (ws.change.after.identity[0].type == "SystemAssigned" or
+         ws.change.after.identity[0].type == "SystemAssigned, UserAssigned")
+    }
+}
+
+# Ensure online endpoints have managed identity
+ensure_endpoint_identity = rule {
+    all ml_endpoints as _, ep {
+        ep.change.after.identity != null and
+        length(ep.change.after.identity) > 0 and
+        (ep.change.after.identity[0].type == "SystemAssigned" or
+         ep.change.after.identity[0].type == "SystemAssigned, UserAssigned")
+    }
+}
+
+# Ensure ML workspaces have all required integrations
+ensure_workspace_integrations = rule {
+    all ml_workspaces as _, ws {
+        ws.change.after.application_insights_id != null and
+        ws.change.after.key_vault_id != null and
+        ws.change.after.storage_account_id != null and
+        ws.change.after.container_registry_id != null
+    }
+}
+
+# In production, network access should be restricted
+# This is advisory for the basic architecture
+ensure_network_isolation = rule when tfconfig.variables.environment.default != "prod" {
+    true
+} else {
+    all ml_workspaces as _, ws {
+        ws.change.after.public_network_access_enabled == false
+    } and
+    all ml_endpoints as _, ep {
+        ep.change.after.public_network_access_enabled == false
+    }
+}
+
+# Ensure deployments use an appropriate instance type
+ensure_appropriate_compute = rule {
+    all ml_deployments as _, dep {
+        dep.change.after.compute != null and
+        length(dep.change.after.compute) > 0 and
+        dep.change.after.compute[0].instance_type != null and
+        startswith(dep.change.after.compute[0].instance_type, "Standard_")
+    }
+}
+
+# Ensure required tags are applied
+ensure_required_tags = rule {
+    all ml_workspaces as _, ws {
+        ws.change.after.tags != null and
+        keys(ws.change.after.tags) contains "Environment" and
+        keys(ws.change.after.tags) contains "Project"
+    } and
+    all ml_endpoints as _, ep {
+        ep.change.after.tags != null and
+        keys(ep.change.after.tags) contains "Environment" and
+        keys(ep.change.after.tags) contains "Project"
+    }
+}
+
+# Main rule that combines all the rules
+main = rule {
+    ensure_workspace_identity and
+    ensure_endpoint_identity and
+    ensure_workspace_integrations and
+    ensure_network_isolation and
+    ensure_appropriate_compute and
+    ensure_required_tags
+}

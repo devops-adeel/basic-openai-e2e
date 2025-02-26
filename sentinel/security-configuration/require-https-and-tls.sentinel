@@ -1,0 +1,52 @@
+# CIS Azure 9.1: Ensure web app redirects all HTTP traffic to HTTPS
+# CIS Azure 9.4: Ensure the web app is using the latest version of TLS encryption
+
+import "tfplan/v2" as tfplan
+import "tfconfig/v2" as tfconfig
+import "strings"
+
+# Get all Azure web app resources from all modules
+allWebApps = filter tfplan.resource_changes as _, rc {
+    rc.type in ["azurerm_linux_web_app", "azurerm_windows_web_app", "azurerm_app_service"] and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Enforce HTTPS only setting
+enforce_https_only = rule {
+    all allWebApps as _, webapp {
+        webapp.change.after.https_only == true
+    }
+}
+
+# Check TLS version is at least 1.2
+minimum_tls_version = rule {
+    all allWebApps as _, webapp {
+        webapp.change.after.site_config[0].minimum_tls_version == "1.2"
+    }
+}
+
+# Check that FTPS is disabled or set to "FtpsOnly"
+ftps_state = rule {
+    all allWebApps as _, webapp {
+        keys(webapp.change.after.site_config[0]) contains "ftps_state" and
+        (webapp.change.after.site_config[0].ftps_state == "Disabled" or
+         webapp.change.after.site_config[0].ftps_state == "FtpsOnly")
+    }
+}
+
+# Check for HTTP/2 enabled
+http2_enabled = rule {
+    all allWebApps as _, webapp {
+        keys(webapp.change.after.site_config[0]) contains "http2_enabled" and
+        webapp.change.after.site_config[0].http2_enabled == true
+    }
+}
+
+# Main rule that combines all the rules
+main = rule {
+    enforce_https_only and
+    minimum_tls_version and
+    ftps_state and
+    http2_enabled
+}

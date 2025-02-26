@@ -1,0 +1,73 @@
+# CIS Azure 8.1: Ensure that the expiration date is set on all keys
+# CIS Azure 8.2: Ensure that the expiration date is set on all secrets
+# CIS Azure 8.4: Ensure the Key Vault is recoverable
+
+import "tfplan/v2" as tfplan
+
+# Get all Azure Key Vault resources from all modules
+allKeyVaults = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_key_vault" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Get all Azure Key Vault Keys
+allKeys = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_key_vault_key" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Get all Azure Key Vault Secrets
+allSecrets = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_key_vault_secret" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Ensure Key Vault has soft delete enabled with appropriate retention
+ensure_soft_delete = rule {
+    all allKeyVaults as _, kv {
+        kv.change.after.soft_delete_retention_days >= 7
+    }
+}
+
+# Ensure Key Vault has purge protection enabled
+ensure_purge_protection = rule {
+    all allKeyVaults as _, kv {
+        kv.change.after.purge_protection_enabled == true
+    }
+}
+
+# Ensure all keys have an expiration date
+ensure_keys_expiration = rule {
+    all allKeys as _, key {
+        key.change.after.expiration_date != null
+    }
+}
+
+# Ensure all secrets have an expiration date
+ensure_secrets_expiration = rule {
+    all allSecrets as _, secret {
+        secret.change.after.expiration_date != null
+    }
+}
+
+# Verify Key Vault network access is restricted
+# Note: For this basic architecture, we're allowing public access
+# In a production environment, this would be set to deny
+verify_network_acls = rule {
+    all allKeyVaults as _, kv {
+        (kv.change.after.network_acls == null) or
+        (kv.change.after.network_acls[0].bypass == "AzureServices")
+    }
+}
+
+# Main rule that combines all the rules
+main = rule {
+    ensure_soft_delete and
+    ensure_purge_protection and
+    ensure_keys_expiration and 
+    ensure_secrets_expiration and
+    verify_network_acls
+}

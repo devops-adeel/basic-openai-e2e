@@ -1,0 +1,70 @@
+# Sentinel policy for Azure AI Search service configuration
+
+import "tfplan/v2" as tfplan
+import "tfconfig/v2" as tfconfig
+
+# Get all Search service resources
+search_services = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_search_service" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# For production readiness, ensure replica count for high availability
+# Standard+ SKUs should have at least 2 replicas for HA, and 3 for zonal redundancy
+ensure_replicas = rule when tfconfig.variables.environment.default != "prod" {
+    true
+} else {
+    all search_services as _, ss {
+        ss.change.after.sku == "free" or
+        ss.change.after.sku == "basic" or
+        (contains(["standard", "standard2", "standard3", "storage_optimized_l1", "storage_optimized_l2"], ss.change.after.sku) and
+         ss.change.after.replica_count >= 3)
+    }
+}
+
+# Ensure appropriate partition count based on expected data volume
+ensure_partition_count = rule {
+    all search_services as _, ss {
+        ss.change.after.sku == "free" or
+        ss.change.after.partition_count >= 1
+    }
+}
+
+# Ensure non-free tier for production
+ensure_appropriate_sku = rule when tfconfig.variables.environment.default != "prod" {
+    true
+} else {
+    all search_services as _, ss {
+        ss.change.after.sku != "free"
+    }
+}
+
+# For production, ensure network restrictions are enabled
+# This is advisory for the basic architecture
+ensure_network_restrictions = rule when tfconfig.variables.environment.default != "prod" {
+    true
+} else {
+    all search_services as _, ss {
+        ss.change.after.public_network_access_enabled == false or
+        ss.change.after.ip_rule != null
+    }
+}
+
+# Ensure required tags are applied
+ensure_required_tags = rule {
+    all search_services as _, ss {
+        ss.change.after.tags != null and
+        keys(ss.change.after.tags) contains "Environment" and
+        keys(ss.change.after.tags) contains "Project"
+    }
+}
+
+# Main rule that combines all the rules
+main = rule {
+    ensure_replicas and
+    ensure_partition_count and
+    ensure_appropriate_sku and
+    ensure_network_restrictions and
+    ensure_required_tags
+}

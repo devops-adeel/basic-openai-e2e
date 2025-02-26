@@ -1,0 +1,69 @@
+# CIS Azure 9.5: Ensure Container Registry has content trust policy enabled
+# CIS Azure 9.6: Minimize admin access for Container Registries
+
+import "tfplan/v2" as tfplan
+import "tfconfig/v2" as tfconfig
+
+# Get all Container Registry resources
+acrs = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_container_registry" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Ensure admin access is disabled unless explicitly required
+ensure_admin_disabled = rule {
+    all acrs as _, acr {
+        acr.change.after.admin_enabled == null or
+        acr.change.after.admin_enabled == false
+    }
+}
+
+# For Premium SKU, ensure content trust is enabled
+ensure_content_trust = rule {
+    all acrs as _, acr {
+        acr.change.after.sku != "Premium" or
+        (acr.change.after.trust_policy != null and
+         acr.change.after.trust_policy[0].enabled == true)
+    }
+}
+
+# Ensure system-assigned managed identity is enabled
+ensure_managed_identity = rule {
+    all acrs as _, acr {
+        acr.change.after.identity != null and
+        length(acr.change.after.identity) > 0 and
+        (acr.change.after.identity[0].type == "SystemAssigned" or
+         acr.change.after.identity[0].type == "SystemAssigned, UserAssigned")
+    }
+}
+
+# For Premium SKU in production, ensure network rules are configured
+# This is advisory for the basic architecture
+ensure_network_rules = rule when tfconfig.variables.environment.default != "prod" {
+    true
+} else {
+    all acrs as _, acr {
+        acr.change.after.sku != "Premium" or
+        (acr.change.after.network_rule_set != null and
+         acr.change.after.network_rule_set[0].default_action == "Deny")
+    }
+}
+
+# Check for required tags
+ensure_required_tags = rule {
+    all acrs as _, acr {
+        acr.change.after.tags != null and
+        keys(acr.change.after.tags) contains "Environment" and
+        keys(acr.change.after.tags) contains "Project"
+    }
+}
+
+# Main rule that combines all the rules
+main = rule {
+    ensure_admin_disabled and
+    ensure_content_trust and
+    ensure_managed_identity and
+    ensure_network_rules and
+    ensure_required_tags
+}

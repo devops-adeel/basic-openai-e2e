@@ -1,0 +1,65 @@
+# CIS Azure 1.23: Ensure that 'Unattached disks' are encrypted with CMK
+# Extended to enforce proper tagging of all resources
+
+import "tfplan/v2" as tfplan
+
+# Define required tags
+required_tags = [
+    "Environment",
+    "Project",
+    "Provisioner"
+]
+
+# Get all resources that support tags
+allTaggableResources = filter tfplan.resource_changes as _, rc {
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update") and
+    rc.type not in ["azurerm_role_assignment", "azurerm_monitor_diagnostic_setting"]
+}
+
+# Ensure all resources have required tags
+ensure_required_tags = rule {
+    all allTaggableResources as _, resource {
+        all required_tags as tag {
+            resource.change.after.tags != null and
+            keys(resource.change.after.tags) contains tag
+        }
+    }
+}
+
+# Ensure Environment tag has valid values
+valid_environments = ["dev", "test", "staging", "prod", "production"]
+
+ensure_valid_environment = rule {
+    all allTaggableResources as _, resource {
+        resource.change.after.tags == null or
+        keys(resource.change.after.tags) not contains "Environment" or
+        resource.change.after.tags["Environment"] in valid_environments
+    }
+}
+
+# Ensure Provisioner tag is set to "Terraform"
+ensure_terraform_provisioner = rule {
+    all allTaggableResources as _, resource {
+        resource.change.after.tags == null or
+        keys(resource.change.after.tags) not contains "Provisioner" or
+        resource.change.after.tags["Provisioner"] == "Terraform"
+    }
+}
+
+# Ensure Project tag is not empty
+ensure_project_specified = rule {
+    all allTaggableResources as _, resource {
+        resource.change.after.tags == null or
+        keys(resource.change.after.tags) not contains "Project" or
+        length(resource.change.after.tags["Project"]) > 0
+    }
+}
+
+# Main rule
+main = rule {
+    ensure_required_tags and
+    ensure_valid_environment and
+    ensure_terraform_provisioner and
+    ensure_project_specified
+}

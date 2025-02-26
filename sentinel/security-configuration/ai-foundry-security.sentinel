@@ -1,0 +1,86 @@
+# Sentinel policy for AI Foundry security configuration
+
+import "tfplan/v2" as tfplan
+import "tfconfig/v2" as tfconfig
+
+# Get AI Foundry resources
+ai_foundry_hubs = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_machine_learning_hub" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+ai_foundry_projects = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_machine_learning_project" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+ai_foundry_connections = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_machine_learning_connection" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Ensure AI Foundry Hubs have managed identity
+ensure_hub_identity = rule {
+    all ai_foundry_hubs as _, hub {
+        hub.change.after.identity != null and
+        length(hub.change.after.identity) > 0 and
+        (hub.change.after.identity[0].type == "SystemAssigned" or
+         hub.change.after.identity[0].type == "SystemAssigned, UserAssigned")
+    }
+}
+
+# Ensure AI Foundry Projects have managed identity
+ensure_project_identity = rule {
+    all ai_foundry_projects as _, project {
+        project.change.after.identity != null and
+        length(project.change.after.identity) > 0 and
+        (project.change.after.identity[0].type == "SystemAssigned" or
+         project.change.after.identity[0].type == "SystemAssigned, UserAssigned")
+    }
+}
+
+# Ensure AI Foundry Connections use managed identity for credentials
+ensure_connections_use_identity = rule {
+    all ai_foundry_connections as _, conn {
+        conn.change.after.credentials != null and
+        length(conn.change.after.credentials) > 0 and
+        conn.change.after.credentials[0].identity != null and
+        conn.change.after.credentials[0].identity[0].type == "SystemAssigned"
+    }
+}
+
+# For production environments, ensure network restrictions
+# This is advisory for the basic architecture
+ensure_network_security = rule when tfconfig.variables.environment.default != "prod" {
+    true
+} else {
+    # In production, AI Foundry should use private network connectivity
+    # This is a placeholder for actual production requirements
+    true
+}
+
+# Ensure required tags are applied
+ensure_required_tags = rule {
+    all ai_foundry_hubs as _, hub {
+        hub.change.after.tags != null and
+        keys(hub.change.after.tags) contains "Environment" and
+        keys(hub.change.after.tags) contains "Project"
+    } and
+    all ai_foundry_projects as _, project {
+        project.change.after.tags != null and
+        keys(project.change.after.tags) contains "Environment" and
+        keys(project.change.after.tags) contains "Project"
+    }
+}
+
+# Main rule that combines all the rules
+main = rule {
+    ensure_hub_identity and
+    ensure_project_identity and
+    ensure_connections_use_identity and
+    ensure_network_security and
+    ensure_required_tags
+}

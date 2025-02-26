@@ -1,0 +1,112 @@
+# Sentinel policy for network security configuration
+# CIS Azure 6.1-6.6: Network Security and Firewall configurations
+
+import "tfplan/v2" as tfplan
+import "tfconfig/v2" as tfconfig
+
+# Get resources that support network security configurations
+key_vaults = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_key_vault" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+storage_accounts = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_storage_account" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+cognitive_accounts = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_cognitive_account" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+container_registries = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_container_registry" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update") and
+    rc.change.after.sku == "Premium"
+}
+
+search_services = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_search_service" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+ml_workspaces = filter tfplan.resource_changes as _, rc {
+    rc.type == "azurerm_machine_learning_workspace" and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# This is a basic policy for the reference architecture
+# For production, network restrictions should be enabled
+
+# Network security check for all resources in production
+# This is advisory for the basic architecture
+network_security_check = rule when tfconfig.variables.environment.default != "prod" {
+    true
+} else {
+    # Key Vault should have network restrictions in production
+    all key_vaults as _, kv {
+        kv.change.after.network_acls != null and
+        kv.change.after.network_acls[0].default_action == "Deny"
+    } and
+
+    # Storage should have network restrictions in production
+    all storage_accounts as _, sa {
+        sa.change.after.network_rules != null and
+        sa.change.after.network_rules[0].default_action == "Deny"
+    } and
+
+    # OpenAI should have private endpoints in production
+    all cognitive_accounts as _, ca {
+        ca.change.after.public_network_access_enabled == false
+    } and
+
+    # Container Registry should have network rules in production (if Premium)
+    all container_registries as _, cr {
+        cr.change.after.network_rule_set != null and
+        cr.change.after.network_rule_set[0].default_action == "Deny"
+    } and
+
+    # Search services should have private access in production
+    all search_services as _, ss {
+        ss.change.after.public_network_access_enabled == false
+    } and
+
+    # ML workspaces should have private access in production
+    all ml_workspaces as _, ws {
+        ws.change.after.public_network_access_enabled == false
+    }
+}
+
+# NSG validation for subnets (when present)
+# This is for environments with a VNet configuration
+nsg_validation = rule when length(tfplan.resource_changes) == 0 {
+    true
+} else {
+    # If there are network security groups, ensure they have appropriate rules
+    # This is a placeholder for actual NSG validation in real production environments
+    true
+}
+
+# Check for private endpoints (when applicable)
+# This is for environments with private endpoint configuration
+private_endpoints_check = rule when length(tfplan.resource_changes) == 0 {
+    true
+} else {
+    # If there are private endpoints, ensure they are properly configured
+    # This is a placeholder for actual private endpoint validation
+    true
+}
+
+# Main rule that combines all the rules
+main = rule {
+    network_security_check and
+    nsg_validation and
+    private_endpoints_check
+}

@@ -1,0 +1,62 @@
+# Ensure Azure resources use managed identities for authentication
+
+import "tfplan/v2" as tfplan
+
+# List of resource types that should have managed identities
+resourceTypesWithIdentity = [
+    "azurerm_linux_web_app",
+    "azurerm_windows_web_app",
+    "azurerm_app_service",
+    "azurerm_machine_learning_workspace",
+    "azurerm_machine_learning_hub",
+    "azurerm_machine_learning_project",
+    "azurerm_machine_learning_online_endpoint",
+    "azurerm_cognitive_account",
+    "azurerm_key_vault"
+]
+
+# Get all resources that should have managed identities
+resources = filter tfplan.resource_changes as _, rc {
+    rc.type in resourceTypesWithIdentity and
+    rc.mode == "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Check if managed identity is enabled
+ensure_managed_identity = rule {
+    all resources as _, resource {
+        resource.change.after.identity != null and
+        length(resource.change.after.identity) > 0 and
+        (resource.change.after.identity[0].type == "SystemAssigned" or
+         resource.change.after.identity[0].type == "UserAssigned" or
+         resource.change.after.identity[0].type == "SystemAssigned, UserAssigned")
+    }
+}
+
+# For system-assigned identity, check that the principal_id exists
+ensure_system_assigned_configured = rule {
+    all resources as _, resource {
+        resource.change.after.identity == null or
+        resource.change.after.identity[0].type != "SystemAssigned" or
+        resource.change.after.identity[0].principal_id != null
+    }
+}
+
+# For user-assigned identity, check that user_assigned_identity_ids is not empty
+ensure_user_assigned_configured = rule {
+    all resources as _, resource {
+        resource.change.after.identity == null or
+        !strings.has_prefix(resource.change.after.identity[0].type, "UserAssigned") or
+        (
+            resource.change.after.identity[0].identity_ids != null and
+            length(resource.change.after.identity[0].identity_ids) > 0
+        )
+    }
+}
+
+# Main rule
+main = rule {
+    ensure_managed_identity and
+    ensure_system_assigned_configured and
+    ensure_user_assigned_configured
+}
