@@ -1,0 +1,85 @@
+name: Sentinel Policy Check
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.sentinel'
+      - '**.hcl'
+      - '**.tf'
+      - '.github/workflows/sentinel-policy-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sentinel:
+    name: Sentinel Policy Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+          terraform_wrapper: false
+      
+      - name: Terraform Init
+        id: init
+        run: terraform init -backend=false
+      
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -out=tfplan.binary
+      
+      - name: Convert Terraform Plan to JSON
+        id: plan-json
+        run: terraform show -json tfplan.binary > tfplan.json
+      
+      - name: Setup Sentinel
+        uses: bloominlabs/setup-hashicorp-releases@v1
+        with:
+          package: sentinel
+          version: 0.24.0
+      
+      - name: Run Sentinel
+        id: sentinel
+        run: |
+          cd sentinel
+          sentinel apply -global "tfplan=$(cat ../tfplan.json)" || SENTINEL_EXIT_CODE=$?
+          
+          if [ -n "$SENTINEL_EXIT_CODE" ]; then
+            echo "::group::Sentinel Detailed Output"
+            sentinel apply -global "tfplan=$(cat ../tfplan.json)" -trace
+            echo "::endgroup::"
+            exit $SENTINEL_EXIT_CODE
+          fi
+      
+      - name: Comment PR with Sentinel Results
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request' && (success() || failure())
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const formatStatus = (failed) => failed ? '❌ Failed' : '✅ Passed';
+            const sentinelStatus = ${{ steps.sentinel.outcome == 'success' }};
+            
+            const body = `## Sentinel Policy Check: ${formatStatus(!sentinelStatus)}
+            
+            ${sentinelStatus 
+              ? '✅ All policies passed! Your infrastructure complies with the defined policies.'
+              : '⚠️ Some policies failed. Please check the workflow logs for details and ensure your infrastructure follows the required policies.'}
+            
+            ${!sentinelStatus ? 'Policies might be failing for security, compliance, or best practice reasons. Review the workflow logs to see exactly which policies failed and why.' : ''}`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
