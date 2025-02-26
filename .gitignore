@@ -1,0 +1,88 @@
+# Terraform files
+**/.terraform/
+**/.terraform.lock.hcl
+.terraform
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.*
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*tfplan*
+.terraformrc
+terraform.rc
+crash.log
+crash.*.log
+
+# Sentinel files
+sentinel/test/
+**/.sentinel/
+*.auto.tfvars
+.sentinel-policy-root
+.sentinel_override.hcl
+
+# Azure credentials
+.azure/
+terraform.publish.tfvars
+*credentials*
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.code-workspace
+
+# Local environment files
+.env
+.env.*
+*.local
+.envrc
+
+# Log files
+*.log
+logs/
+
+# Dependency directories
+node_modules/
+vendor/
+
+# Compiled files
+*.tfstate.backup
+*.tfplan.json
+
+# Credentials
+*.pem
+*.key
+*id_rsa*
+*.pub
+*.crt
+
+### Vim ###
+# Swap
+[._]*.s[a-v][a-z]
+!*.svg  # comment out if you don't need vector files
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+
+# Session
+Session.vim
+Sessionx.vim
+
+# Temporary
+.netrwhist
+*~
+# Auto-generated tag files
+tags
+# Persistent undo
+[._]*.un~
